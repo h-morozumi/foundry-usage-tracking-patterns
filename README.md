@@ -1,0 +1,1 @@
+# foundry-usage-tracking-patterns
