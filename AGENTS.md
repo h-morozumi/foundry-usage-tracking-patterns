@@ -23,7 +23,7 @@ This repository provides **hands-on documentation** for tracking per-user usage 
 
 The repository ships **two families** of patterns. Pattern 1 is the conceptual baseline; Pattern 2 (all 2A/2B/2C/2D variants) is the **headline AI Gateway strategy** and the main deliverable.
 
-1. **Pattern 1: Entra ID + Diagnostic Logs** *(APIM なし — concept / minimum viable setup)*
+1. **Pattern 1: Entra ID + Diagnostic Logs** *(no APIM — concept / minimum viable setup)*
    - Authenticate users with Microsoft Entra ID directly against Azure OpenAI / Foundry
    - Capture per-user usage via Azure Monitor Diagnostic Logs
 
@@ -62,28 +62,28 @@ The repository ships **two families** of patterns. Pattern 1 is the conceptual b
 - Manage dependencies via `pyproject.toml` and `uv.lock`
 - Run scripts with `uv run` and add dependencies with `uv add`
 
-### OpenAI SDK 互換性ポリシー（重要）
+### OpenAI SDK Compatibility Policy (Important)
 
-全パターンのサンプルアプリは **公式 `openai` Python SDK の `AzureOpenAI` クラスをそのまま使う** ことを必須要件とする。AOAI 直叩きでも APIM (AI Gateway) 経由でも、クライアント実装が同じ書き味で動くことが本リポジトリの設計目標。
+All sample apps across all patterns **MUST use the official `openai` Python SDK `AzureOpenAI` class as-is**. The repository's core design goal is that the client implementation reads the same way whether it talks to AOAI directly or through APIM (AI Gateway).
 
-- ✅ **使ってよい**: `openai` パッケージ (`AzureOpenAI`)、`azure-identity`（`DefaultAzureCredential` などのトークンプロバイダー用途）
-- ❌ **使ってはいけない**: 独自 HTTP クライアントによる REST 直叩き、`requests` / `httpx` で OpenAI API を手書きする実装、フォーク版 SDK
-- パターン別の SDK 使い方:
-  - **Pattern 1 / 2A / 2D**: `AzureOpenAI(azure_ad_token_provider=...)` で Entra Bearer を渡す
-  - **Pattern 2B**: クライアント観点では Pattern 2A / 2D と同じ（Entra Bearer）。AOAI Key 変換は APIM 内部で完結
-  - **Pattern 2C**: `AzureOpenAI(api_key=<APIM Subscription Key>, azure_endpoint=<APIM URL>)` で動かす。**SDK 改修ゼロ** を成立させるため、APIM 側の API 定義で `subscriptionKeyParameterNames.header = "api-key"` を必ず設定する（既定の `Ocp-Apim-Subscription-Key` のままだと SDK が送らない）
-- カスタムヘッダーを足したい場合は `default_headers` 引数を使い、SDK 本体には触らない
+- ✅ **Allowed**: `openai` package (`AzureOpenAI`), `azure-identity` (for token providers such as `DefaultAzureCredential`)
+- ❌ **Not allowed**: hand-rolled REST calls via a custom HTTP client, hand-written OpenAI API calls using `requests` / `httpx`, forked SDKs
+- Per-pattern SDK usage:
+  - **Pattern 1 / 2A / 2D**: pass an Entra Bearer via `AzureOpenAI(azure_ad_token_provider=...)`
+  - **Pattern 2B**: identical to Pattern 2A / 2D from the client's perspective (Entra Bearer). The AOAI Key swap is fully contained inside APIM
+  - **Pattern 2C**: use `AzureOpenAI(api_key=<APIM Subscription Key>, azure_endpoint=<APIM URL>)`. To preserve **zero SDK modifications**, the APIM API definition MUST set `subscriptionKeyParameterNames.header = "api-key"` (the SDK does not send the default `Ocp-Apim-Subscription-Key` header)
+- If extra custom headers are needed, use the `default_headers` argument — never patch the SDK itself
 
 ### Repository Layout (planned)
 
-Pattern 2 は「APIM を AI Gateway として導入する」本命の戦略で、クライアント↔APIM 間と APIM↔AOAI 間の認証設計で 4 つのサブパターン（2A / 2B / 2C / 2D）に分けている。それぞれ独立した azd プロジェクトとして扱う。
+Pattern 2 is the headline AI Gateway strategy: "introduce APIM as the AI Gateway." It is split into 4 sub-patterns (2A / 2B / 2C / 2D) by the authentication design on each leg (client ↔ APIM and APIM ↔ AOAI). Each is treated as an independent azd project.
 
 ```
 .
 ├── AGENTS.md                  # This file
 ├── README.md                  # Top-level overview (Japanese)
 ├── pattern-1-entra-direct/
-│   ├── azure.yaml             # azd project root for Pattern 1 (Entra Direct, APIM なし)
+│   ├── azure.yaml             # azd project root for Pattern 1 (Entra Direct, no APIM)
 │   ├── infra/                 # Bicep (AVM-based)
 │   ├── app/                   # Python sample (uv)
 │   └── README.md
@@ -94,7 +94,7 @@ Pattern 2 は「APIM を AI Gateway として導入する」本命の戦略で�
 │   └── README.md
 ├── pattern-2b-apim-key-exchange/
 │   ├── azure.yaml             # azd project root for Pattern 2B (Entra → AOAI Key)
-│   ├── infra/                 # APIM + Key Vault + AOAI (Private Endpoint 推奨)
+│   ├── infra/                 # APIM + Key Vault + AOAI (Private Endpoint recommended)
 │   ├── app/
 │   └── README.md
 ├── pattern-2c-apim-subscription-key/
@@ -102,9 +102,9 @@ Pattern 2 は「APIM を AI Gateway として導入する」本命の戦略で�
 │   ├── infra/                 # APIM + Key Vault + AOAI (Private)
 │   ├── app/
 │   └── README.md
-└── pattern-2d-apim-entra-mi/        ★ 本命 / AI Gateway ゴール
+└── pattern-2d-apim-entra-mi/        ★ GOAL / AI Gateway target
     ├── azure.yaml             # azd project root for Pattern 2D (Entra + APIM Managed Identity)
-    ├── infra/                 # APIM(MI) + AOAI(API Key 無効化, Private)
+    ├── infra/                 # APIM(MI) + AOAI(API Key disabled, Private)
     ├── app/
     └── README.md
 ```

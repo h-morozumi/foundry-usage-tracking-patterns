@@ -96,7 +96,7 @@ flowchart LR
 - **やること**: API キーを廃止し、Entra ID トークンで Foundry を呼び出す。Foundry の AOAI 診断ログを Log Analytics に流して KQL でユーザー別利用量を集計する
 - **強み**: 構成がシンプル、追加コンポーネントが少ない
 - **制約**: クライアントが Entra ID 認証に対応している必要がある
-- **詳細**: `pattern-1-entra-direct/README.md`
+- **ハンズオン手順 / KQL / トラブルシュート**: 👉 [`pattern-1-entra-direct/README.md`](./pattern-1-entra-direct/README.md)
 
 ---
 
