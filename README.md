@@ -34,11 +34,13 @@ Microsoft Foundry Models（Azure OpenAI 等）を **ユーザー単位で利用�
 
 | # | パターン | クライアント → APIM | APIM → AOAI | per-user 集計の主役 | 位置づけ |
 |---|---|---|---|---|---|
-| **1** | Entra ID 直結 + Diagnostic Logs | —（直接 AOAI） | — | AOAI Diagnostic Logs | 最小構成・原理理解 |
-| **2A** | AI Gateway: Bearer パススルー | Entra Bearer (`aud=AOAI`) | 同じ Bearer を転送 | AOAI 診断 + APIM ログ | Gateway 導入の最初の一歩 |
-| **2B** | AI Gateway: Entra → AOAI Key | Entra Bearer (`aud=APIM`) | AOAI Key (Key Vault) | APIM ログ (`emit-token-metric`) | 全社共通 AOAI を複数アプリで共有 |
-| **2C** | AI Gateway: per-user Subscription Key | **APIM Subscription Key**（ユーザー毎に発行） | AOAI Key (Key Vault) | APIM ログ（Subscription dimension） | 既存キー前提クライアントを変えずに「誰が」を取る現実解 |
-| **2D ★** | **AI Gateway: Entra + APIM Managed Identity** | Entra Bearer (`aud=api://ai-gateway`) | **APIM Managed Identity**（キーレス） | APIM ログ (`emit-token-metric`) | **AI Gateway 思想のゴール**。キーレス・MI・Entra で完結 |
+| **1** | Entra ID 直結 + AOAI 診断ログ | —（直接 AOAI） | — | AOAI 診断ログ（LA） | 最小構成・原理理解 |
+| **2A** | AI Gateway: Bearer パススルー | Entra Bearer (`aud=AOAI`) | 同じ Bearer を転送 | **AOAI 診断ログ**（LA）＋APIM 2系統ログ | Gateway 導入の最初の一歩 |
+| **2B** | AI Gateway: Entra → AOAI Key | Entra Bearer (`aud=APIM`) | AOAI Key (Key Vault) | **APIM 2系統ログ**（GatewayLogs → LA / `emit-token-metric` → AI） | 全社共通 AOAI を複数アプリで共有 |
+| **2C** | AI Gateway: per-user Subscription Key | **APIM Subscription Key**（ユーザー毎に発行） | AOAI Key (Key Vault) | **APIM 2系統ログ**（Subscription dim） | 既存キー前提クライアントを変えずに「誰が」を取る現実解 |
+| **2D ★** | **AI Gateway: Entra + APIM Managed Identity** | Entra Bearer (`aud=api://ai-gateway`) | **APIM Managed Identity**（キーレス） | **APIM 2系統ログ**（UserId dim） | **AI Gateway 思想のゴール**。キーレス・MI・Entra で完結 |
+
+> **⚠️ APIM のロギングは常に 2 系統**　—　どのパターンでも APIM は「① **診断ログ（GatewayLogs）→ Log Analytics**」と「② **Application Insights（`<diagnostic>` トレース + `azure-openai-emit-token-metric` カスタムメトリクス）**」の 2 ストリームを同時に使うのが前提。Pattern 2B/2C/2D では **② が per-user トークン集計の主役**（AOAI 側が key/MI 一律に見えるため）。
 
 各パターンは **独立した `azd` プロジェクト** として構成されており、興味のあるパターンだけを単独で試せます。
 
@@ -75,7 +77,7 @@ properties: {
 
 ---
 
-### Pattern 1: Entra ID + Diagnostic Logs（APIM なし／概要・原理理解）
+### Pattern 1: Entra ID + AOAI 診断ログ（APIM なし／概要・原理理解）
 
 ```mermaid
 flowchart LR
@@ -83,15 +85,15 @@ flowchart LR
     App[Client App<br/>Python/uv]
     Entra[(Microsoft Entra ID)]
     Foundry[Foundry / Azure OpenAI]
-    LA[(Log Analytics<br/>Diagnostic Logs)]
+    LA[(Log Analytics<br/>AOAI 診断ログ)]
 
     User -->|Sign in| Entra
     Entra -->|"Access Token<br/>aud: Cognitive Services"| App
     App -->|Bearer token<br/>呼び出し| Foundry
-    Foundry -->|"Diagnostic Logs<br/>(caller principal)"| LA
+    Foundry -->|"AOAI 診断ログ<br/>(caller principal)"| LA
 ```
 
-- **やること**: API キーを廃止し、Entra ID トークンで Foundry を呼び出す。Foundry の Diagnostic Logs を Log Analytics に流して KQL でユーザー別利用量を集計する
+- **やること**: API キーを廃止し、Entra ID トークンで Foundry を呼び出す。Foundry の AOAI 診断ログを Log Analytics に流して KQL でユーザー別利用量を集計する
 - **強み**: 構成がシンプル、追加コンポーネントが少ない
 - **制約**: クライアントが Entra ID 認証に対応している必要がある
 - **詳細**: `pattern-1-entra-direct/README.md`
@@ -133,13 +135,15 @@ flowchart LR
     APIM[Azure API Management<br/>AI Gateway]
     Foundry[Foundry / AOAI]
     LA[(Log Analytics)]
+    AI[(Application Insights)]
 
     User -->|Sign in| Entra
     Entra -->|"Access Token<br/>aud: cognitiveservices"| App
     App -->|Bearer token| APIM
     APIM -->|Bearer token<br/>そのまま転送| Foundry
-    APIM -->|APIM Logs| LA
-    Foundry -->|"Diagnostic Logs<br/>(caller = ユーザー)"| LA
+    APIM -->|"① GatewayLogs"| LA
+    APIM -.->|"② emit-token-metric<br/>(任意)"| AI
+    Foundry -->|"AOAI 診断ログ<br/>(caller = ユーザー)"| LA
 ```
 
 ##### 認証の詳細フロー（APIM と AOAI の二段階認証）
@@ -160,7 +164,7 @@ sequenceDiagram
     APIM->>APIM: レート制限 / トークン制限 /<br/>コンテンツ安全性 等のポリシー適用
     APIM->>AOAI: そのまま Bearer トークンを転送<br/>(Authorization ヘッダーは書き換えない)
     Note over AOAI: ② AOAI 側でも JWT を検証し<br/>"Cognitive Services OpenAI User"<br/>ロールを RBAC でチェック
-    AOAI->>AOAI: 診断ログに caller の<br/>objectId / appId を記録
+    AOAI->>AOAI: AOAI 診断ログに caller の<br/>objectId / appId を記録
     AOAI-->>APIM: 応答
     APIM-->>APP: 応答
 ```
@@ -183,12 +187,19 @@ sequenceDiagram
 </inbound>
 ```
 
-ポイントは **`set-header name="Authorization"` を書かない** こと。受信したユーザー Bearer トークンがそのまま AOAI に届き、AOAI 側の診断ログに **ユーザー identity が記録** されます。
+ポイントは **`set-header name="Authorization"` を書かない** こと。受信したユーザー Bearer トークンがそのまま AOAI に届き、AOAI 診断ログに **ユーザー identity が記録** されます。
 
-##### per-user 集計の取得元
+##### per-user 集計の取得元（APIM のロギングは 2 系統）
 
-- **AOAI Diagnostic Logs** が一次情報（`Identity` = ユーザーの `objectId`）
-- APIM 診断ログにも `validate-jwt` 後の claim を残しておくと、APIM ログ単体でも簡易ダッシュボードが組めるうえに、ログ欠損時の冗長性も得られる
+Pattern 2A では **一次情報は AOAI 側**だが、APIM も以下の 2 系統ログを補助的に有効化しておくとよい。
+
+| 系統 | バックエンド | 役割 |
+|---|---|---|
+| **① 診断ログ（GatewayLogs）** | Log Analytics | リクエスト単位の監査（メソッド/URL/ステータス/レイテンシ、`validate-jwt` 後の claim を `set-header` で付加して保存も可） |
+| **② Application Insights** | Application Insights | `<diagnostic>` ポリシーによる詳細トレース。`azure-openai-emit-token-metric` の per-user カスタムメトリクスもこちらに emit（このパターンでは任意） |
+
+- **AOAI 診断ログ**（Log Analytics）が一次情報（`Identity` = ユーザーの `objectId`）
+- 上記 APIM 2 系統をそろえておくと、ログ欠損時の冗長性・事後調査でのトレーサビリティが一気に高まる
 
 ##### 必要な権限設計
 
@@ -210,15 +221,17 @@ flowchart LR
     APIM[Azure API Management<br/>AI Gateway]
     KV[(Key Vault)]
     Foundry[Foundry / AOAI<br/>※APIM 専用に閉じる推奨]
-    LA[(Log Analytics<br/>+ App Insights)]
+    LA[(Log Analytics)]
+    AI[(Application Insights)]
 
     User -->|Sign in| Entra
     Entra -->|"Access Token<br/>aud: APIM API"| App
     App -->|Bearer token| APIM
     KV -.->|named value経由<br/>AOAI key 取得| APIM
     APIM -->|api-key ヘッダーに置換| Foundry
-    APIM -->|"APIM Logs +<br/>emit-token-metric<br/>(UserId dimension)"| LA
-    Foundry -->|"Diagnostic Logs<br/>(caller = key 一律)"| LA
+    APIM -->|"① GatewayLogs"| LA
+    APIM -->|"② emit-token-metric<br/>(UserId dimension)"| AI
+    Foundry -->|"AOAI 診断ログ<br/>(caller = key 一律)"| LA
 ```
 
 ##### 認証の詳細フロー
@@ -238,7 +251,7 @@ sequenceDiagram
     APIM->>KV: ② named value 経由で<br/>AOAI key を取得
     APIM->>APIM: ③ Authorization 削除し<br/>api-key ヘッダーに差し替え
     APIM->>AOAI: api-key 認証で呼び出し
-    Note over AOAI: ④ 呼び出し主体は "key" 一律<br/>診断ログにユーザー識別なし
+    Note over AOAI: ④ 呼び出し主体は "key" 一律<br/>AOAI 診断ログにユーザー識別なし
     AOAI-->>APIM: 応答 (usage: prompt/completion tokens)
     APIM->>APIM: ⑤ azure-openai-emit-token-metric で<br/>UserId dimension 付きメトリクス送信
     APIM-->>APP: 応答
@@ -284,11 +297,17 @@ sequenceDiagram
 </outbound>
 ```
 
-##### per-user 集計の取得元
+##### per-user 集計の取得元（APIM のロギングは 2 系統）
 
-- **APIM ログ / `azure-openai-emit-token-metric` のみ** が per-user 集計のソース
-- AOAI 側の Diagnostic Logs は「APIM 経由・key 認証」一律になり、**ユーザー個別の追跡不可**
-- → APIM の診断ログ保持期間・サンプリング率・キャパシティ設計が極めて重要
+AOAI 側は key 一律で見えないため、**APIM 側の 2 系統ログが唯一の per-user ソース** になる。
+
+| 系統 | バックエンド | per-user 集計での役割 |
+|---|---|---|
+| **① 診断ログ（GatewayLogs）** | Log Analytics | リクエスト単位の監査ログ。`validate-jwt` で取った `userId` 変数を `set-header` 等で残せば、KQL でユーザー別の **コール回数・エラー率** を集計可 |
+| **② Application Insights** | Application Insights | `azure-openai-emit-token-metric` の出力先。**prompt / completion トークン数** を `UserId` dimension 付きカスタムメトリクスとして emit（per-user **コスト按分**の主役） |
+
+- AOAI 診断ログは「APIM 経由・key 認証」一律になり、**ユーザー個別の追跡不可**
+- → ① の保持期間・② のカスタムメトリクスサンプリング設計が極めて重要
 
 ##### 必要な設計ポイント
 
@@ -314,6 +333,7 @@ flowchart LR
     KV[(Key Vault)]
     Foundry[Foundry / AOAI<br/>※APIM 専用に閉じる]
     LA[(Log Analytics)]
+    AI[(Application Insights)]
 
     UserA -->|Subscription Key A| AppA
     UserB -->|Subscription Key B| AppB
@@ -321,8 +341,9 @@ flowchart LR
     AppB -->|api-key: Sub Key B| APIM
     KV -.->|named value| APIM
     APIM -->|api-key: AOAI Key| Foundry
-    APIM -->|"APIM Logs<br/>(SubscriptionId dimension)"| LA
-    Foundry -->|"Diagnostic Logs<br/>(caller = AOAI key 一律)"| LA
+    APIM -->|"① GatewayLogs"| LA
+    APIM -->|"② emit-token-metric<br/>(SubscriptionId dimension)"| AI
+    Foundry -->|"AOAI 診断ログ<br/>(caller = AOAI key 一律)"| LA
 ```
 
 ##### 認証の詳細フロー
@@ -377,11 +398,15 @@ sequenceDiagram
 </outbound>
 ```
 
-##### per-user 集計の取得元
+##### per-user 集計の取得元（APIM のロギングは 2 系統）
 
-- APIM の **Subscription 単位** で「誰が」を識別（APIM ログ / `emit-token-metric` の dimension）
+| 系統 | バックエンド | per-user 集計での役割 |
+|---|---|---|
+| **① 診断ログ（GatewayLogs）** | Log Analytics | リクエスト監査ログ。`SubscriptionId` / `SubscriptionName` が自動で記録されるため、KQL でユーザー（= Subscription）別のコール数・エラー率を集計 |
+| **② Application Insights** | Application Insights | `azure-openai-emit-token-metric` で `SubscriptionId` / `ProductName` を dimension としたカスタムメトリクスを emit（**コスト按分**の主役） |
+
 - 運用上は **1 Subscription = 1 ユーザー or 1 部門 or 1 アプリ** で発行するのがセオリー
-- AOAI 側 Diagnostic Logs は AOAI key 一律で **ユーザー識別不可**
+- AOAI 診断ログは AOAI key 一律で **ユーザー識別不可**
 
 ##### 強み / 弱み
 
@@ -416,14 +441,16 @@ flowchart LR
     Entra[(Microsoft Entra ID<br/>App Reg: AI Gateway)]
     APIM[Azure API Management<br/>AI Gateway<br/>+ Managed Identity]
     Foundry[Foundry / AOAI<br/>※API Key 無効化]
-    LA[(Log Analytics<br/>+ App Insights)]
+    LA[(Log Analytics)]
+    AI[(Application Insights)]
 
     User -->|Sign in| Entra
     Entra -->|"Access Token<br/>aud: api://ai-gateway"| App
     App -->|Bearer token| APIM
     APIM -->|"managed-identity Bearer<br/>aud: cognitiveservices"| Foundry
-    APIM -->|"APIM Logs +<br/>emit-token-metric<br/>(UserId dimension)"| LA
-    Foundry -->|"Diagnostic Logs<br/>(caller = APIM MI 一律)"| LA
+    APIM -->|"① GatewayLogs"| LA
+    APIM -->|"② emit-token-metric<br/>(UserId dimension)"| AI
+    Foundry -->|"AOAI 診断ログ<br/>(caller = APIM MI 一律)"| LA
 ```
 
 ##### 認証の詳細フロー
@@ -586,7 +613,7 @@ sequenceDiagram
    6. Log Analytics の KQL で「誰が使ったか」を確認
    ```
 
-> **Note**: `az login` で取得したトークンが Foundry / Azure OpenAI の **データプレーン呼び出し** に使われ、そのユーザー principal が Diagnostic Logs に記録される、という流れがこのハンズオンの核です。
+> **Note**: `az login` で取得したトークンが Foundry / Azure OpenAI の **データプレーン呼び出し** に使われ、そのユーザー principal が AOAI 診断ログに記録される、という流れがこのハンズオンの核です。
 
 ### 必要なツール・権限
 
@@ -637,7 +664,7 @@ azd down --purge      # 後片付け（Key Vault などソフトデリート対�
 
 ## おすすめの学習順序
 
-1. **Pattern 1** から始める — APIM なしの最小構成で、Entra ID 認証と Diagnostic Logs の基本（=「誰が使ったか」の取得原理）を理解
+1. **Pattern 1** から始める — APIM なしの最小構成で、Entra ID 認証と AOAI 診断ログの基本（=「誰が使ったか」の取得原理）を理解
 2. **Pattern 2A** に進む — Pattern 1 を APIM 経由に置き換え、Bearer パススルーで「APIM = 認証 + ポリシー」「AOAI = 認可 + per-user ログ」の役割分担を体験
 3. **Pattern 2B** で「Entra → key 変換」を体験 — 全社共通 AOAI を共有する構成。per-user 集計が APIM ログのみになるトレードオフを理解
 4. **Pattern 2C** で「既存キークライアントを変えずに per-user 化」を体験 — Entra ID に踏み込めない現場の現実解
