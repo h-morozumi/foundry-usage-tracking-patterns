@@ -64,14 +64,32 @@ The repository ships **two families** of patterns. Pattern 1 is the conceptual b
 
 ### OpenAI SDK Compatibility Policy (Important)
 
-All sample apps across all patterns **MUST use the official `openai` Python SDK `AzureOpenAI` class as-is**. The repository's core design goal is that the client implementation reads the same way whether it talks to AOAI directly or through APIM (AI Gateway).
+All sample apps across all patterns **MUST use the official `openai` Python SDK as-is** (either the `OpenAI` class against the Azure OpenAI v1 endpoint, or the `AzureOpenAI` class). The repository's core design goal is that the client implementation reads the same way whether it talks to AOAI directly or through APIM (AI Gateway).
 
-- ✅ **Allowed**: `openai` package (`AzureOpenAI`), `azure-identity` (for token providers such as `DefaultAzureCredential`)
+**Preferred default: Azure OpenAI v1 endpoint with the `OpenAI` client.**
+
+The v1 endpoint (`<endpoint>/openai/v1/`) became GA in August 2025. It removes the per-call `api_version` requirement and lets you adopt new models / API features without updating the SDK call sites. Use it for all new sample apps in this repo.
+
+```python
+from openai import OpenAI
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+
+token_provider = get_bearer_token_provider(
+    DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
+)
+
+client = OpenAI(
+    base_url=f"{endpoint.rstrip('/')}/openai/v1/",
+    api_key=token_provider,  # callable: SDK auto-refreshes the bearer token
+)
+```
+
+- ✅ **Allowed**: `openai` package (`OpenAI` with v1 base_url, or legacy `AzureOpenAI`), `azure-identity` (for `DefaultAzureCredential` / `get_bearer_token_provider`)
 - ❌ **Not allowed**: hand-rolled REST calls via a custom HTTP client, hand-written OpenAI API calls using `requests` / `httpx`, forked SDKs
 - Per-pattern SDK usage:
-  - **Pattern 1 / 2A / 2D**: pass an Entra Bearer via `AzureOpenAI(azure_ad_token_provider=...)`
+  - **Pattern 1 / 2A / 2D**: `OpenAI(base_url=".../openai/v1/", api_key=token_provider)` with an Entra Bearer
   - **Pattern 2B**: identical to Pattern 2A / 2D from the client's perspective (Entra Bearer). The AOAI Key swap is fully contained inside APIM
-  - **Pattern 2C**: use `AzureOpenAI(api_key=<APIM Subscription Key>, azure_endpoint=<APIM URL>)`. To preserve **zero SDK modifications**, the APIM API definition MUST set `subscriptionKeyParameterNames.header = "api-key"` (the SDK does not send the default `Ocp-Apim-Subscription-Key` header)
+  - **Pattern 2C**: `OpenAI(base_url="<APIM URL>/openai/v1/", api_key="<APIM Subscription Key>")`. To preserve **zero SDK modifications**, the APIM API definition MUST set `subscriptionKeyParameterNames.header = "Authorization"` so the SDK's `Authorization: Bearer ...` header is treated as the subscription key — or alternatively keep `AzureOpenAI(api_key=..., azure_endpoint=...)` with `subscriptionKeyParameterNames.header = "api-key"`. Pick whichever the Pattern 2C sample documents
 - If extra custom headers are needed, use the `default_headers` argument — never patch the SDK itself
 
 ### Repository Layout (planned)
