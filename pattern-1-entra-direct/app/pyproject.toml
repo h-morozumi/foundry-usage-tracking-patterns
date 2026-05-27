@@ -4,8 +4,12 @@ version = "0.1.0"
 description = "Pattern 1 sample: call Azure OpenAI with an Entra ID bearer token via the official openai SDK."
 requires-python = ">=3.11"
 dependencies = [
-    "openai>=1.50.0",
+    # 1.55.0+ で OpenAI() クライアントの `api_key` に bearer token provider (callable) を渡せる。
+    # Azure OpenAI v1 エンドポイント (/openai/v1/) と Entra 認証の組み合わせで利用する。
+    "openai>=1.55.0",
     "azure-identity>=1.19.0",
+    # .env (azd env get-values の出力) をそのまま読み込むために使用。
+    "python-dotenv>=1.0.1",
 ]
 
 [tool.uv]

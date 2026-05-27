@@ -2,3 +2,8 @@
 __pycache__/
 *.pyc
 .python-version
+
+# ローカルの azd 出力を保存する シークレット。コミット禁止。
+.env
+.env.*
+!.env.example

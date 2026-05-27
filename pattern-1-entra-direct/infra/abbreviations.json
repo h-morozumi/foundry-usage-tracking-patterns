@@ -1,5 +1,4 @@
 {
-  "resourcesResourceGroups": "rg-",
   "cognitiveServicesAccounts": "aoai-",
   "operationalInsightsWorkspaces": "log-"
 }

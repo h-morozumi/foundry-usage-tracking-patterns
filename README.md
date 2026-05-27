@@ -30,11 +30,42 @@ Microsoft Foundry Models（Azure OpenAI 等）を **ユーザー単位で利用�
 
 ---
 
+## ハンズオンのストーリーライン — 「誰が」から「どれだけ」へ
+
+本ハンズオンは、**1 つの問いを 2 段階で解いていく** 構成です。
+
+```mermaid
+flowchart LR
+    Q0([API Key 運用<br/>誰が・何を・どれだけ<br/>すべて不明])
+    Q1[Pattern 1<br/>Entra Direct]
+    Q2[Pattern 2<br/>AI Gateway]
+    Goal([誰が × どれだけ × 何を<br/>を一元集計])
+
+    Q0 -->|まず<br/>Entra ID で<br/>呼び出し主体を可視化| Q1
+    Q1 -->|診断ログだけでは<br/>トークン数が結合不可<br/>と気付く| Q2
+    Q2 -->|APIM が usage を<br/>per-user メトリクスとして emit| Goal
+```
+
+| ステップ | 担当パターン | 答えられる問い | 取れる粒度 |
+|---|---|---|---|
+| **Step 1** | Pattern 1（Entra Direct） | **Q1: 「誰が」叩いたか？** | per-user の **呼び出し回数** のみ（AOAI 診断ログから集計） |
+| **Step 2** | Pattern 2A / 2B / 2C / 2D（AI Gateway） | **Q2: 「誰が」「どれだけ」使ったか？** | per-user × per-call の **prompt / completion / total トークン数**（APIM の `azure-openai-emit-token-metric` で集計） |
+
+**Pattern 1 → Pattern 2 への動機付け**：
+
+- Pattern 1 で「Entra ID 直結なら **呼び出し主体（oid）は AOAI 診断ログに記録される**」ことを実機確認できる ✅
+- しかし同じ AOAI 直結構成では、**トークン数を持つログ（`AzureOpenAIRequestUsage`）と caller identity を持つログ（`RequestResponse`）を結合する手段が事実上ない** ❌（詳細は Pattern 1 README §6）
+- → ここで「**AI Gateway（APIM）が必要な理由**」が腹落ちする。APIM の `azure-openai-emit-token-metric` ポリシーは **AOAI レスポンスの `usage` を per-user dimension 付きカスタムメトリクスとして emit** できるため、Q2 の答えになる
+
+> **ハンズオン教材としての立て付け**: まず Pattern 1 で **「Q1 は解けるが Q2 が解けない痛み」** を体感してから、Pattern 2 で **「AI Gateway が Q2 を解く仕組み」** を 4 つの認証バリエーション（2A / 2B / 2C / 2D）で比較するのが推奨ルートです。
+
+---
+
 ## ハンズオンで扱うパターン
 
 | # | パターン | クライアント → APIM | APIM → AOAI | per-user 集計の主役 | 位置づけ |
 |---|---|---|---|---|---|
-| **1** | Entra ID 直結 + AOAI 診断ログ | —（直接 AOAI） | — | AOAI 診断ログ（LA） | 最小構成・原理理解 |
+| **1** | Entra ID 直結 + AOAI 診断ログ | —（直接 AOAI） | — | AOAI 診断ログ（LA） ⚠️ **per-user × per-token は構造的に不可、呼び出し回数まで** | 学習用・原理理解（実運用不可） |
 | **2A** | AI Gateway: Bearer パススルー | Entra Bearer (`aud=AOAI`) | 同じ Bearer を転送 | **AOAI 診断ログ**（LA）＋APIM 2系統ログ | Gateway 導入の最初の一歩 |
 | **2B** | AI Gateway: Entra → AOAI Key | Entra Bearer (`aud=APIM`) | AOAI Key (Key Vault) | **APIM 2系統ログ**（GatewayLogs → LA / `emit-token-metric` → AI） | 全社共通 AOAI を複数アプリで共有 |
 | **2C** | AI Gateway: per-user Subscription Key | **APIM Subscription Key**（ユーザー毎に発行） | AOAI Key (Key Vault) | **APIM 2系統ログ**（Subscription dim） | 既存キー前提クライアントを変えずに「誰が」を取る現実解 |
@@ -79,6 +110,8 @@ properties: {
 
 ### Pattern 1: Entra ID + AOAI 診断ログ（APIM なし／概要・原理理解）
 
+> **このパターンで答える問い**: **Q1「誰が」叩いたか？** ✅　/　**Q2「どれだけ」使ったか？** ❌（次の Pattern 2 で解く）
+
 ```mermaid
 flowchart LR
     User([User])
@@ -93,14 +126,20 @@ flowchart LR
     Foundry -->|"AOAI 診断ログ<br/>(caller principal)"| LA
 ```
 
-- **やること**: API キーを廃止し、Entra ID トークンで Foundry を呼び出す。Foundry の AOAI 診断ログを Log Analytics に流して KQL でユーザー別利用量を集計する
+- **やること**: API キーを廃止し、Entra ID トークンで Foundry を呼び出す。AOAI 診断ログ / メトリクスを Log Analytics に流して「**Q1 は解けるが、AOAI 直結のままでは Q2 が解けない**」ことを実機で体感する
 - **強み**: 構成がシンプル、追加コンポーネントが少ない
-- **制約**: クライアントが Entra ID 認証に対応している必要がある
-- **ハンズオン手順 / KQL / トラブルシュート**: 👉 [`pattern-1-entra-direct/README.md`](./pattern-1-entra-direct/README.md)
+- **⚠️ 重要な制約**: 実機検証の結果、この構成では **「誰が」×「どれだけトークンを使ったか」を結合した集計は構造的に不可能** です。詳細は Pattern 1 の README §6 を参照。要点は以下の 3 点です。
+  - `RequestResponse` カテゴリ: caller identity あり / トークン数 **なし**（`requestLength` / `responseLength` は bytes）
+  - `AzureOpenAIRequestUsage` カテゴリ: 両方持つ設計だが **本検証では emit されず**、ハンズオン教材として安定しない
+  - `AzureMetrics`: トークン数あり / **caller ディメンションなし**（テナント全体単位の集計のみ）
+- **実運用への推奨パス**: per-user × per-token を本気で取るなら、初めから **Pattern 2A / 2B / 2C / 2D （APIM を AI Gateway として導入）** を選んでください
+- **ハンズオン手順 / KQL / トラブルシュート / 構造的限界の詳細**: 👉 [`pattern-1-entra-direct/README.md`](./pattern-1-entra-direct/README.md)
 
 ---
 
 ### Pattern 2: AI Gateway 戦略 ★本命 — APIM を AI Gateway として導入
+
+> **このパターン群で答える問い**: **Q2「誰が」「どれだけ」使ったか？** ✅（Pattern 1 で残ったトークン数 × ユーザーの結合を、APIM の `azure-openai-emit-token-metric` ポリシーで解決する）
 
 ここからが **本命の AI Gateway 戦略** です。Azure API Management（以下 APIM）を AOAI の前段に置き、**認証・認可・per-user トラッキング・レート制限・コンテンツ安全性・複数モデルのルーティング** を一元化します。
 
@@ -664,11 +703,13 @@ azd down --purge      # 後片付け（Key Vault などソフトデリート対�
 
 ## おすすめの学習順序
 
-1. **Pattern 1** から始める — APIM なしの最小構成で、Entra ID 認証と AOAI 診断ログの基本（=「誰が使ったか」の取得原理）を理解
-2. **Pattern 2A** に進む — Pattern 1 を APIM 経由に置き換え、Bearer パススルーで「APIM = 認証 + ポリシー」「AOAI = 認可 + per-user ログ」の役割分担を体験
-3. **Pattern 2B** で「Entra → key 変換」を体験 — 全社共通 AOAI を共有する構成。per-user 集計が APIM ログのみになるトレードオフを理解
-4. **Pattern 2C** で「既存キークライアントを変えずに per-user 化」を体験 — Entra ID に踏み込めない現場の現実解
-5. **Pattern 2D ★** で締めくくる — Entra + APIM Managed Identity による **キーレス・最終形** の AI Gateway を構築
+各ステップが **ストーリーラインのどの問いを解いているか** を意識しながら進めると、構成判断の根拠が腹落ちしやすくなります。
+
+1. **Pattern 1** から始める（**Q1「誰が」を解く・Q2 が解けない痛みを体感**） — APIM なしの最小構成で、Entra ID 認証と AOAI 診断ログの基本を体感し、**「AOAI 直接では何が取れて何が取れないか」を手を動かして記憶する**（⚠️ 実運用選択肢ではない点を何度も強調）
+2. **Pattern 2A** に進む（**Q2「どれだけ」を解く・最も小さい一歩**） — Pattern 1 を APIM 経由に置き換え、Bearer パススルーで「APIM = 認証 + ポリシー + per-user メトリクス emit」「AOAI = 認可 + per-user ログ」の役割分担を体験
+3. **Pattern 2B** で「Entra → key 変換」を体験 — 全社共通 AOAI を共有する構成。AOAI 側が key 一律になるため、**Q2 の主役は APIM の `emit-token-metric` のみ** になるトレードオフを理解
+4. **Pattern 2C** で「既存キークライアントを変えずに per-user 化」を体験 — Entra ID に踏み込めない現場でも Q1/Q2 を解く現実解
+5. **Pattern 2D ★** で締めくくる — Entra + APIM Managed Identity による **キーレス・最終形** の AI Gateway。Q1/Q2 を解きつつ、AOAI Key を物理的に廃止する
 
 ---
 

@@ -143,6 +143,6 @@ Pattern 2 is the headline AI Gateway strategy: "introduce APIM as the AI Gateway
 
 - Before adding a new Bicep resource, check whether an AVM module exists (`mcp_bicep_list_avm_metadata`)
 - Before introducing a new Python dependency, confirm `uv` is the manager in use
-- **Sample apps must use the official `openai` Python SDK (`AzureOpenAI` class) — do NOT hand-roll REST calls or fork the SDK.** If a pattern seems to require SDK changes, fix it on the APIM side instead (e.g., `subscriptionKeyParameterNames.header = "api-key"` for Pattern 2C)
+- **Sample apps must use the official `openai` Python SDK as-is (`OpenAI` class against the Azure OpenAI v1 endpoint preferred, or legacy `AzureOpenAI`) — do NOT hand-roll REST calls or fork the SDK.** If a pattern seems to require SDK changes, fix it on the APIM side instead (e.g., `subscriptionKeyParameterNames.header = "api-key"` for Pattern 2C)
 - When editing infrastructure, validate Bicep (`mcp_bicep_build_bicep`) and follow Bicep best practices (`mcp_bicep_get_bicep_best_practices`)
 - When unsure about Azure service behavior, consult Microsoft Learn (`mcp_microsoft-doc_microsoft_docs_search`) rather than guessing
