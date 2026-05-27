@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "skills": {
+    "azure-aigateway": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-aigateway/SKILL.md",
+      "computedHash": "25798a1e2a567fb190eb6d32a579dfb4736e59e86278fa2f8d7b119905b4b6c9"
+    },
+    "azure-kusto": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-kusto/SKILL.md",
+      "computedHash": "215ead35ad3fccbb5b3fcd2c98aa221dd5cabdbd72978c42e36d929201c94a2c"
+    },
+    "find-skills": {
+      "source": "vercel-labs/skills",
+      "sourceType": "github",
+      "skillPath": "skills/find-skills/SKILL.md",
+      "computedHash": "9e1c8b3103f92fa8092568a44fe64858de7c5c9dc65ce4bea8f168080e889cfd"
+    },
+    "microsoft-foundry": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/microsoft-foundry/SKILL.md",
+      "computedHash": "ecfb4b90d8d493fa355aa9893afaa93039f71807a5cc6c1ee81ab9b93c1e4aed"
+    },
+    "update-avm-modules-in-bicep": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "skillPath": "skills/update-avm-modules-in-bicep/SKILL.md",
+      "computedHash": "8071b53c14b949325cb055b69eb44afee07d5166d73ab5799205377880198277"
+    }
+  }
+}
